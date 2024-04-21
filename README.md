@@ -17,7 +17,8 @@ This repository is dedicated to the exploration of fine-tuning the BERT Base Unc
 - `bert_baseline.py`: Script for baseline training with PyTorch's data parallelism.
 - `pipeline.py`: Script for advanced training with DeepSpeed's pipeline parallelism.
 - `ds_config.json`: DeepSpeed configuration file for pipeline settings.
-- `/results`: Directory containing metrics and performance results.
+- `/metrics`: Directory containing metrics and performance results.
+- `Intuitive Explanation`: A friendly explanation of the project
 
 ## Methodology
 
@@ -29,7 +30,9 @@ Performance metrics such as runtime, throughput, validation loss, GPU utilizatio
 
 ## How to Use
 
-Instructions on setting up the environment, installing dependencies, and executing the training scripts are provided for reproducibility and further experimentation.
+- Make sure you have at least four GPUs, preferably in single node, and CUDA driver version 11.7 or later
+- Make sure to install all pytorch, transformers, and deepspeed.
+- If you face libraries compatibility issues, consider using a docker image and run it with Kubectl. In this case, I have provided a sample in `/dockerimage` directory 
 
 ## Discussion
 
