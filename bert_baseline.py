@@ -222,6 +222,9 @@ class BertFinetuner:
                     progress = (current_step / total_steps) * 100
                     print(f"Epoch {epoch+1}: {progress:.2f}% | {current_step}/{total_steps} [Elapsed: {elapsed_time:.2f} sec, Loss: {loss.item():.2f}, Throughput: {batch_throughput:.2f} items/sec, GPU Utlization: {gpu_utilization}]")
 
+            avg_val_loss, val_accuracy = self.validate()
+            val_losses.append(avg_val_loss)
+            val_accuracies.append(val_accuracy)
             if self.rank == 0:
                 avg_epoch_loss = epoch_loss / len(self.train_loader)
                 print(f"Epoch {epoch+1} completed. Average Loss: {avg_epoch_loss:.2f}")
@@ -254,7 +257,7 @@ class BertFinetuner:
                 "average validation accuracy": avg_val_accuracy,
                 "throughputs": throughputs,
                 "gpu_utilizations": gpu_utils,
-                "loss" : losses
+                "loss" : losses,
                 "validation losses": val_losses,
                 "validation accuracies": val_accuracies
             }
