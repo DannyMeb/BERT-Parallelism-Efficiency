@@ -12,6 +12,7 @@ from transformers import BertTokenizerFast, BertForQuestionAnswering
 from torch.optim import AdamW 
 import json
 import time
+import torch.nn.functional as F
 import numpy as np
 import subprocess
 
@@ -110,14 +111,47 @@ class BertFinetuner:
 
         train_size = int(0.8 * len(dataset))
         val_size = len(dataset) - train_size
-        self.train_dataset, _ = random_split(dataset, [train_size, val_size])
+        self.train_dataset, self.val_dataset = random_split(dataset, [train_size, val_size])
 
         self.train_sampler = DistributedSampler(self.train_dataset, num_replicas=world_size, rank=rank, shuffle=True)
         self.train_loader = DataLoader(self.train_dataset, batch_size=16, sampler=self.train_sampler)
 
+        self.val_sampler = DistributedSampler(self.val_dataset, num_replicas=world_size, rank=rank)
+        self.val_loader = DataLoader(self.val_dataset, batch_size=16, sampler=self.val_sampler)
+        
         self.model = BertForQuestionAnswering.from_pretrained(self.model_name).to(self.device)
         self.model = DDP(self.model, device_ids=[rank])
 
+    def validate(self):
+        self.model.eval()
+        total_loss = 0
+        total_correct = 0
+        total_examples = 0
+        
+        with torch.no_grad():
+            for batch in self.val_loader:
+                input_ids = batch['input_ids'].to(self.device)
+                attention_mask = batch['attention_mask'].to(self.device)
+                start_positions = batch['start_positions'].to(self.device)
+                end_positions = batch['end_positions'].to(self.device)
+
+                outputs = self.model(input_ids, attention_mask=attention_mask,
+                                     start_positions=start_positions, end_positions=end_positions)
+                loss = outputs.loss
+                total_loss += loss.item() * input_ids.size(0)
+
+                # Calculate accuracy
+                start_preds = torch.argmax(outputs.start_logits, dim=-1)
+                end_preds = torch.argmax(outputs.end_logits, dim=-1)
+                correct = ((start_preds == start_positions) & (end_preds == end_positions)).float().sum()
+                total_correct += correct.item()
+                total_examples += input_ids.size(0)
+
+        avg_loss = total_loss / total_examples
+        accuracy = total_correct / total_examples
+        self.model.train()
+        return avg_loss, accuracy
+    
     def setup(self):
         os.environ['MASTER_ADDR'] = 'localhost'
         os.environ['MASTER_PORT'] = '12355'
@@ -150,7 +184,7 @@ class BertFinetuner:
         total_steps = len(self.train_loader) * 5  # Total steps for 5 epochs
         current_step = 0
         
-        throughputs, gpu_utils, losses = [], [], []
+        throughputs, gpu_utils, losses, val_losses, val_accuracies = [], [], [], [], []  # Initialize all lists here
         training_start_time = time.time()
         
         self.model.train()
@@ -197,6 +231,8 @@ class BertFinetuner:
         avg_throughput = np.mean(throughputs)
         avg_loss=np.mean(losses)
         final_loss = losses[-1]
+        avg_val_loss = np.mean(val_losses)
+        avg_val_accuracy = np.mean(val_accuracies)
         avg_gpu_utilization = np.mean(gpu_utils) if gpu_utils else 0
         print("✨✨✨ Training Completed Successfully! ✨✨✨")
         print(f'Training time: {runtime}')
@@ -204,6 +240,8 @@ class BertFinetuner:
         print(f'Average Loss: {avg_loss}')
         print(f'Average Throughput : {avg_throughput}')
         print(f'Average GPU Utilization: {avg_gpu_utilization}')
+        print(f'Average Validation Loss: {avg_val_loss}')
+        print(f'Average Validation Accuracy: {avg_val_accuracy:.2f}')
         
         if self.rank == 0:
             metrics_filename = f"metrics/detailed_baseline_{self.world_size}GPU_metricsFinal5EpochsAverage.json"
@@ -212,9 +250,13 @@ class BertFinetuner:
                 "average loss": avg_loss,
                 "average throughput": avg_throughput,
                 "average gpu utilization": avg_gpu_utilization,
+                "average validation loss": avg_val_loss,
+                "average validation accuracy": avg_val_accuracy,
                 "throughputs": throughputs,
                 "gpu_utilizations": gpu_utils,
                 "loss" : losses
+                "validation losses": val_losses,
+                "validation accuracies": val_accuracies
             }
             with open(metrics_filename, "w") as f:
                 json.dump(metrics, f, indent=4)
